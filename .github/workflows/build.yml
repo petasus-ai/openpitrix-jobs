@@ -1,0 +1,31 @@
+name: Build and Push Multiarch Docker Image
+
+on:
+  push: {}  # Trigger on all pushes; see step conditions below
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup QEMU
+        run: |
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+      - name: Create Docker Buildx Builder
+        run: |
+          export DOCKER_CLI_EXPERIMENTAL=enabled
+          docker context create multi-arch-build || true
+          docker buildx create --use multi-arch-build
+
+      - name: Login to GitLab Container Registry
+        env:
+          GITLAB_CI_BOT_SECRET: ${{ secrets.GITLAB_CI_BOT_SECRET }}
+        run: |
+          echo "$GITLAB_CI_BOT_SECRET" | docker login registry.gitlab.com -u sonaproject --password-stdin
+
+      - name: Build multiarch docker image and push
+        if: github.ref == 'refs/heads/master'
+        run: ./multiarch_build.sh
