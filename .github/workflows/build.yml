@@ -39,4 +39,4 @@ jobs:
             --platform linux/arm64/v8,linux/amd64 \
             --provenance=false \
             --sbom=false \
-            --tag quay.io/edgestack/openpitrix-jobs:latest .
+            --tag quay.io/edgestack/openpitrix-jobs:v3.4.0 .

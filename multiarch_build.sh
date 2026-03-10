@@ -3,7 +3,7 @@
 set -ex
 set -o pipefail
 
-TAG=${TAG:-v3.3.2}
+TAG=${TAG:-v3.4.0}
 REPO=${REPO:-quay.io/edgestack}
 
 # support other container tools. e.g. podman
