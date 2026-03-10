@@ -20,12 +20,21 @@ jobs:
           docker context create multi-arch-build || true
           docker buildx create --use multi-arch-build
 
+      - name: Create Docker Buildx Builder
+        run: |
+          export DOCKER_CLI_EXPERIMENTAL=enabled
+          docker context create multi-arch-build || true
+          docker buildx create --use multi-arch-build
+
       - name: Login to quay.io Container Registry
         env:
           QUAY_CI_BOT_SECRET: ${{ secrets.QUAY_CI_BOT_SECRET }}
         run: |
           echo "$QUAY_CI_BOT_SECRET" | docker login quay.io -u edgestack --password-stdin
 
-      - name: Build multiarch docker image and push
-        if: github.ref == 'refs/heads/master'
-        run: ./multiarch_build.sh
+      - name: Build and Push Docker Image
+        if: github.ref_name == 'master'
+        run: |
+          DOCKER_CLI_EXPERIMENTAL=enabled docker buildx build --push \
+            --platform linux/arm64/v8,linux/amd64 \
+            --tag quay.io/edgestack/openpitrix-jobs:latest .
