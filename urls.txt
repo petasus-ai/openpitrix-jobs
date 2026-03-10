@@ -114,3 +114,5 @@ https://github.com/petasus-ai/bitnami-charts/raw/refs/heads/main/charts/wildfly-
 https://github.com/petasus-ai/bitnami-charts/raw/refs/heads/main/charts/wordpress-29.2.0.tgz
 https://github.com/petasus-ai/bitnami-charts/raw/refs/heads/main/charts/zipkin-1.3.11.tgz
 https://github.com/petasus-ai/bitnami-charts/raw/refs/heads/main/charts/zookeeper-13.8.7.tgz
+https://github.com/petasus-ai/kaas-charts/raw/refs/heads/main/charts/kubelb-manager-v1.3.4.tgz
+https://github.com/petasus-ai/kaas-charts/raw/refs/heads/main/charts/kubelb-ccm-v1.3.4.tgz
