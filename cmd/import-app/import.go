@@ -200,10 +200,8 @@ func (wf *ImportWorkFlow) CreateApp(ctx context.Context, chrt *chart.Chart) (app
 	}
 
 	// create category if need
-	var ctgName string
-	if chrt.Metadata.Annotations != nil && chrt.Metadata.Annotations[constants.CategoryKeyInChart] != "" {
-		ctgName = strings.TrimSpace(chrt.Metadata.Annotations[constants.CategoryKeyInChart])
-	}
+	ctgName := wf.importConfig.ResolveCategory(chrt)
+	klog.Infof("resolved category for chart %s: %q", chrt.Name(), ctgName)
 
 	var ctg *v1alpha1.HelmCategory
 	if ctgName != "" {
@@ -445,6 +443,7 @@ type ImportConfig struct {
 	// map category name to icon
 	CategoryIcon   map[string]string `yaml:"categoryIcon"`
 	AppNameReplace map[string]string `yaml:"appNameReplace"`
+	AppCategory    map[string]string `yaml:"appCategory"`
 }
 
 func (ic *ImportConfig) ReplaceAppName(chrt *chart.Chart) string {
@@ -467,6 +466,18 @@ func (ic *ImportConfig) GetIcon(ctg string) string {
 
 	// viper is case-insensitive
 	return ic.CategoryIcon[strings.ToLower(ctg)]
+}
+
+func (ic *ImportConfig) ResolveCategory(chrt *chart.Chart) string {
+	if cat, ok := ic.AppCategory[chrt.Name()]; ok && cat != "" {
+		return cat
+	}
+	if chrt.Metadata.Annotations != nil {
+		if cat := strings.TrimSpace(chrt.Metadata.Annotations[constants.CategoryKeyInChart]); cat != "" {
+			return cat
+		}
+	}
+	return ""
 }
 
 func tryLoadImportConfig() (*ImportConfig, error) {
