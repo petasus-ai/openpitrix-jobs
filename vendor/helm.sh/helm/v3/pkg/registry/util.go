@@ -18,22 +18,28 @@ package registry // import "helm.sh/helm/v3/pkg/registry"
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"time"
 
-	"github.com/Masterminds/semver/v3"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	orascontext "oras.land/oras-go/pkg/context"
-	"oras.land/oras-go/pkg/registry"
-
+	"helm.sh/helm/v3/internal/tlsutil"
 	"helm.sh/helm/v3/pkg/chart"
 	"helm.sh/helm/v3/pkg/chart/loader"
+	helmtime "helm.sh/helm/v3/pkg/time"
+
+	"github.com/Masterminds/semver/v3"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
-// IsOCI determines whether or not a URL is to be treated as an OCI URL
+var immutableOciAnnotations = []string{
+	ocispec.AnnotationVersion,
+	ocispec.AnnotationTitle,
+}
+
+// IsOCI determines whether a URL is to be treated as an OCI URL
 func IsOCI(url string) bool {
 	return strings.HasPrefix(url, fmt.Sprintf("%s://", OCIScheme))
 }
@@ -54,8 +60,7 @@ func GetTagMatchingVersionOrConstraint(tags []string, versionString string) (str
 		// If string is empty, set wildcard constraint
 		constraint, _ = semver.NewConstraint("*")
 	} else {
-		// when customer input exact version, check whether have exact match
-		// one first
+		// when customer inputs specific version, check whether there's an exact match first
 		for _, v := range tags {
 			if versionString == v {
 				return v, nil
@@ -94,38 +99,110 @@ func extractChartMeta(chartData []byte) (*chart.Metadata, error) {
 	return ch.Metadata, nil
 }
 
-// ctx retrieves a fresh context.
-// disable verbose logging coming from ORAS (unless debug is enabled)
-func ctx(out io.Writer, debug bool) context.Context {
-	if !debug {
-		return orascontext.Background()
+// NewRegistryClientWithTLS is a helper function to create a new registry client with TLS enabled.
+func NewRegistryClientWithTLS(out io.Writer, certFile, keyFile, caFile string, insecureSkipTLSverify bool, registryConfig string, debug bool) (*Client, error) {
+	tlsConf, err := tlsutil.NewClientTLS(certFile, keyFile, caFile, insecureSkipTLSverify)
+	if err != nil {
+		return nil, fmt.Errorf("can't create TLS config for client: %s", err)
 	}
-	ctx := orascontext.WithLoggerFromWriter(context.Background(), out)
-	orascontext.GetLogger(ctx).Logger.SetLevel(logrus.DebugLevel)
-	return ctx
+	// Create a new registry client
+	registryClient, err := NewClient(
+		ClientOptDebug(debug),
+		ClientOptEnableCache(true),
+		ClientOptWriter(out),
+		ClientOptCredentialsFile(registryConfig),
+		ClientOptHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsConf,
+				Proxy:           http.ProxyFromEnvironment,
+			},
+		}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return registryClient, nil
 }
 
-// parseReference will parse and validate the reference, and clean tags when
-// applicable tags are only cleaned when plus (+) signs are present, and are
-// converted to underscores (_) before pushing
-// See https://github.com/helm/helm/issues/10166
-func parseReference(raw string) (registry.Reference, error) {
-	// The sole possible reference modification is replacing plus (+) signs
-	// present in tags with underscores (_). To do this properly, we first
-	// need to identify a tag, and then pass it on to the reference parser
-	// NOTE: Passing immediately to the reference parser will fail since (+)
-	// signs are an invalid tag character, and simply replacing all plus (+)
-	// occurrences could invalidate other portions of the URI
-	parts := strings.Split(raw, ":")
-	if len(parts) > 1 && !strings.Contains(parts[len(parts)-1], "/") {
-		tag := parts[len(parts)-1]
+// generateOCIAnnotations will generate OCI annotations to include within the OCI manifest
+func generateOCIAnnotations(meta *chart.Metadata, creationTime string) map[string]string {
 
-		if tag != "" {
-			// Replace any plus (+) signs with known underscore (_) conversion
-			newTag := strings.ReplaceAll(tag, "+", "_")
-			raw = strings.ReplaceAll(raw, tag, newTag)
+	// Get annotations from Chart attributes
+	ociAnnotations := generateChartOCIAnnotations(meta, creationTime)
+
+	// Copy Chart annotations
+annotations:
+	for chartAnnotationKey, chartAnnotationValue := range meta.Annotations {
+
+		// Avoid overriding key properties
+		for _, immutableOciKey := range immutableOciAnnotations {
+			if immutableOciKey == chartAnnotationKey {
+				continue annotations
+			}
 		}
+
+		// Add chart annotation
+		ociAnnotations[chartAnnotationKey] = chartAnnotationValue
 	}
 
-	return registry.ParseReference(raw)
+	return ociAnnotations
+}
+
+// getChartOCIAnnotations will generate OCI annotations from the provided chart
+func generateChartOCIAnnotations(meta *chart.Metadata, creationTime string) map[string]string {
+	chartOCIAnnotations := map[string]string{}
+
+	chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationDescription, meta.Description)
+	chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationTitle, meta.Name)
+	chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationVersion, meta.Version)
+	chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationURL, meta.Home)
+
+	if len(creationTime) == 0 {
+		creationTime = helmtime.Now().UTC().Format(time.RFC3339)
+	}
+
+	chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationCreated, creationTime)
+
+	if len(meta.Sources) > 0 {
+		chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationSource, meta.Sources[0])
+	}
+
+	if len(meta.Maintainers) > 0 {
+		var maintainerSb strings.Builder
+
+		for maintainerIdx, maintainer := range meta.Maintainers {
+
+			if len(maintainer.Name) > 0 {
+				maintainerSb.WriteString(maintainer.Name)
+			}
+
+			if len(maintainer.Email) > 0 {
+				maintainerSb.WriteString(" (")
+				maintainerSb.WriteString(maintainer.Email)
+				maintainerSb.WriteString(")")
+			}
+
+			if maintainerIdx < len(meta.Maintainers)-1 {
+				maintainerSb.WriteString(", ")
+			}
+
+		}
+
+		chartOCIAnnotations = addToMap(chartOCIAnnotations, ocispec.AnnotationAuthors, maintainerSb.String())
+
+	}
+
+	return chartOCIAnnotations
+}
+
+// addToMap takes an existing map and adds an item if the value is not empty
+func addToMap(inputMap map[string]string, newKey string, newValue string) map[string]string {
+
+	// Add item to map if its
+	if len(strings.TrimSpace(newValue)) > 0 {
+		inputMap[newKey] = newValue
+	}
+
+	return inputMap
+
 }

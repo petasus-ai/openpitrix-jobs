@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 
 	"helm.sh/helm/v3/internal/tlsutil"
-	"helm.sh/helm/v3/internal/urlutil"
 	"helm.sh/helm/v3/internal/version"
 )
 
@@ -51,6 +50,10 @@ func (g *HTTPGetter) get(href string) (*bytes.Buffer, error) {
 	req, err := http.NewRequest(http.MethodGet, href, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if g.opts.acceptHeader != "" {
+		req.Header.Set("Accept", g.opts.acceptHeader)
 	}
 
 	req.Header.Set("User-Agent", version.GetUserAgent())
@@ -123,18 +126,11 @@ func (g *HTTPGetter) httpClient() (*http.Client, error) {
 		}
 	})
 
-	if (g.opts.certFile != "" && g.opts.keyFile != "") || g.opts.caFile != "" {
-		tlsConf, err := tlsutil.NewClientTLS(g.opts.certFile, g.opts.keyFile, g.opts.caFile)
+	if (g.opts.certFile != "" && g.opts.keyFile != "") || g.opts.caFile != "" || g.opts.insecureSkipVerifyTLS {
+		tlsConf, err := tlsutil.NewClientTLS(g.opts.certFile, g.opts.keyFile, g.opts.caFile, g.opts.insecureSkipVerifyTLS)
 		if err != nil {
 			return nil, errors.Wrap(err, "can't create TLS config for client")
 		}
-		tlsConf.BuildNameToCertificate()
-
-		sni, err := urlutil.ExtractHostname(g.opts.url)
-		if err != nil {
-			return nil, err
-		}
-		tlsConf.ServerName = sni
 
 		g.transport.TLSClientConfig = tlsConf
 	}
