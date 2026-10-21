@@ -21,4 +21,4 @@ COPY --from=builder /release_bin/* /usr/local/bin/
 ARG BUILDDATE
 RUN echo "$BUILDDATE"
 COPY urls.txt /root
-RUN mkdir -p package && cp urls.txt package  && cd /root/package && for pkg in $(cat urls.txt); do wget $pkg; done && rm urls.txt
+RUN mkdir -p package && cp urls.txt package  && cd /root/package && for pkg in $(cat urls.txt); do wget $pkg || exit 1; done && rm urls.txt

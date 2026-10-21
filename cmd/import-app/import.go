@@ -67,6 +67,10 @@ func newImportCmd() *cobra.Command {
 				os.Exit(0)
 			}
 
+			// Petasus: a chart that could not be imported used to be skipped, so the job
+			// completed with apps missing, or to stop the job before the charts after it.
+			// Import every chart that can be imported, then fail if any could not.
+			failed := 0
 			for _, fileInfo := range fileList {
 				if fileInfo.IsDir() {
 					continue
@@ -78,20 +82,28 @@ func newImportCmd() *cobra.Command {
 
 				chrt, err := loader.LoadFile(path.Join(chartDir, fileInfo.Name()))
 				if err != nil {
-					klog.Fatalf("load chart data failed failed, error: %s", err)
+					klog.Errorf("load chart %s failed, error: %s", fileInfo.Name(), err)
+					failed++
+					continue
 				}
 
 				app, err := wf.CreateApp(context.TODO(), chrt)
 				if err != nil {
-					klog.Fatalf("create chart %s failed, error: %s", chrt.Name(), err)
+					klog.Errorf("create chart %s failed, error: %s", chrt.Name(), err)
+					failed++
+					continue
 				}
 
 				appVer, err := wf.CreateAppVer(context.TODO(), app, path.Join(chartDir, fileInfo.Name()))
 				if err != nil {
 					klog.Errorf("create app version failed, error: %s", err)
-
+					failed++
 				}
 				_ = appVer
+			}
+			if failed > 0 {
+				klog.Errorf("%d charts were not imported", failed)
+				os.Exit(1)
 			}
 		},
 	}
@@ -243,7 +255,7 @@ func (wf *ImportWorkFlow) CreateApp(ctx context.Context, chrt *chart.Chart) (app
 func (wf *ImportWorkFlow) CreateAppVer(ctx context.Context, app *v1alpha1.HelmApplication, chartFileName string) (*v1alpha1.HelmApplicationVersion, error) {
 	chrt, err := loader.LoadFile(chartFileName)
 	if err != nil {
-		klog.Fatalf("load chart data failed failed, error: %s", err)
+		klog.Errorf("load chart %s failed, error: %s", chartFileName, err)
 		return nil, err
 	}
 
@@ -436,7 +448,8 @@ func (wf *ImportWorkFlow) UpdateAppVersionStatus(ctx context.Context, appVer *v1
 		}
 	}
 
-	return appVer, nil
+	// Petasus: this used to report success with the version still inactive.
+	return nil, fmt.Errorf("update app version %s status: still conflicting after %d tries", appVer.Name, retry)
 }
 
 type ImportConfig struct {
