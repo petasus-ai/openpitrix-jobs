@@ -162,3 +162,18 @@ jobs:
           for tag in ${TAGS}; do
             docker buildx imagetools inspect "${IMAGE_REPO}:${tag}"
           done
+
+  github-release:
+    name: GitHub release
+    needs: [plan, manifest]
+    if: always() && github.ref_type == 'tag' && needs.plan.result == 'success' && needs.manifest.result != 'failure' && needs.manifest.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: petasus-ai/.github/actions/github-release@075f162d2915e6506467a03465a6c25bf971f8a1
+        with:
+          token: ${{ github.token }}
